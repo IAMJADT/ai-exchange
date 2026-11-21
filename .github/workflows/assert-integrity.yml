@@ -1,0 +1,92 @@
+name: assert-integrity
+
+# 作用：每个 PR 必须通过两条断言，否则不许合并。
+#   1. 不许删除任何文件（历史只追加）。
+#   2. 不许修改「登记类白名单」以外的文件（历史不改写）。
+# 唯一一次例外：删除 .github/workflows/guard-main.yml 是 D7 受权的一次性操作，已显式豁免。
+# 合入后该路径不存在，以后任何删除都会被拦。
+# 注意：本断言只防内容篡改，不防"新增垃圾"——后者靠对方审 PR 把关。
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  assert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出（全历史，用于 diff）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 拉取 base 分支
+        run: |
+          BASE="${GITHUB_BASE_REF:-main}"
+          git fetch origin "$BASE" --quiet
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+
+      - name: 断言：无删除 / 修改限登记类
+        run: |
+          BASE_REF="origin/${BASE}"
+          # 取 PR 相对 base 的变更清单（状态 + 路径）
+          CHANGES=$(git diff --name-status "$BASE_REF...HEAD")
+          echo "--- 变更清单 ---"
+          echo "$CHANGES"
+          echo "----------------"
+
+          # 登记类白名单：允许修改（M）的路径
+          is_register() {
+            case "$1" in
+              INDEX.md|成员.md|NEXT.md|README.md) return 0 ;;
+              decisions/*) return 0 ;;
+              .github/workflows/*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          # 受权的一次性删除豁免（D7：删坏守卫）
+          SANCTIONED_DELETE=".github/workflows/guard-main.yml"
+
+          FAIL=0
+          while IFS=$'\t' read -r st path rest; do
+            [ -z "$st" ] && continue
+            case "$st" in
+              A)
+                # 新增：放行
+                ;;
+              M)
+                # 修改：必须是登记类
+                if ! is_register "$path"; then
+                  echo "::error file=$path::修改了非登记类文件，违反'历史不改写'。如需修改请走登记类或新文件。"
+                  FAIL=1
+                fi
+                ;;
+              D)
+                # 删除：仅豁免受权路径
+                if [ "$path" != "$SANCTIONED_DELETE" ]; then
+                  echo "::error file=$path::删除了文件，违反'只追加不删除'。"
+                  FAIL=1
+                else
+                  echo "::notice::受权一次性删除 $path（D7 决议），放行。"
+                fi
+                ;;
+              R|C)
+                echo "::error file=$path::重命名/复制被拒绝（$st）。"
+                FAIL=1
+                ;;
+              *)
+                echo "::error file=$path::未知变更状态 $st，拒绝。"
+                FAIL=1
+                ;;
+            esac
+          done <<< "$CHANGES"
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "断言未通过。"
+            exit 1
+          fi
+          echo "断言通过。"
