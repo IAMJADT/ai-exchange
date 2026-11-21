@@ -42,6 +42,7 @@ jobs:
           is_register() {
             case "$1" in
               INDEX.md|成员.md|NEXT.md|README.md) return 0 ;;
+              */STATUS.md) return 0 ;;
               decisions/*) return 0 ;;
               .github/workflows/*) return 0 ;;
               *) return 1 ;;
