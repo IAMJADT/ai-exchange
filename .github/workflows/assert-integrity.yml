@@ -33,6 +33,8 @@ jobs:
         run: |
           BASE_REF="origin/${BASE}"
           # 取 PR 相对 base 的变更清单（状态 + 路径）
+          # 关闭 quotepath：否则中文路径会被转义成 "\345\210\266..." 并加引号，白名单永远匹配不上
+          git config core.quotepath false
           CHANGES=$(git diff --name-status "$BASE_REF...HEAD")
           echo "--- 变更清单 ---"
           echo "$CHANGES"
